@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 
-from src.recommender.feature_builder import load_song_data, build_feature_matrix
+from src.recommender.feature_builder import (
+    load_song_data,
+    build_feature_matrix,
+    FEATURE_WEIGHT_PRESETS,
+)
 
 
 # --------------------------------------------------------------------
@@ -15,6 +19,7 @@ from src.recommender.feature_builder import load_song_data, build_feature_matrix
 _SONGS_DF: pd.DataFrame | None = None
 _FEATURE_MATRIX: np.ndarray | None = None
 _FEATURE_COLS: list[str] | None = None
+_CURRENT_PRESET: str | None = None  # Track which preset is cached
 
 
 def _get_songs_df() -> pd.DataFrame:
@@ -25,20 +30,99 @@ def _get_songs_df() -> pd.DataFrame:
     return _SONGS_DF
 
 
-def _get_feature_matrix() -> tuple[np.ndarray, list[str]]:
+def _get_feature_matrix(
+    preset: Optional[str] = None,
+    weights: Optional[Dict[str, float]] = None,
+) -> tuple[np.ndarray, list[str]]:
     """
     Use build_feature_matrix from feature_builder so whatever you defined
     there (danceability/energy/valence/tempo/etc.) is reused consistently.
+    
+    Args:
+        preset: Optional preset name (e.g., "mood", "workout", "chill", "psychedelic")
+        weights: Optional custom weights dict
+        
+    Note: We don't cache when a preset or weights are provided, since different
+    presets produce different matrices.
     """
-    global _FEATURE_MATRIX, _FEATURE_COLS
+    global _FEATURE_MATRIX, _FEATURE_COLS, _CURRENT_PRESET
 
+    songs = _get_songs_df()
+    
+    # If using a preset or custom weights, always rebuild (no caching)
+    if preset or weights:
+        X, feature_cols = build_feature_matrix(songs, weights=weights, preset=preset)
+        return X, feature_cols
+
+    # For default (no preset), use cached version
     if _FEATURE_MATRIX is None or _FEATURE_COLS is None:
-        songs = _get_songs_df()
         X, feature_cols = build_feature_matrix(songs)
         _FEATURE_MATRIX = X
         _FEATURE_COLS = feature_cols
+        _CURRENT_PRESET = "default"
 
     return _FEATURE_MATRIX, _FEATURE_COLS
+
+
+# --------------------------------------------------------------------
+# Genre boosting helper
+# --------------------------------------------------------------------
+GENRE_BOOST_FACTOR = 1.15  # Boost same-genre tracks by 15%
+SUBGENRE_BOOST_FACTOR = 1.10  # Additional boost for same subgenre
+
+
+def _apply_genre_boost(
+    result: pd.DataFrame,
+    ref_genre: Optional[str],
+    ref_subgenre: Optional[str],
+) -> pd.DataFrame:
+    """
+    Boost similarity scores for tracks in the same genre/subgenre.
+    """
+    if ref_genre is None or "playlist_genre" not in result.columns:
+        return result
+    
+    result = result.copy()
+    
+    # Boost same genre
+    same_genre_mask = result["playlist_genre"].str.lower() == ref_genre.lower()
+    result.loc[same_genre_mask, "similarity"] *= GENRE_BOOST_FACTOR
+    
+    # Additional boost for same subgenre
+    if ref_subgenre and "playlist_subgenre" in result.columns:
+        same_subgenre_mask = result["playlist_subgenre"].str.lower() == ref_subgenre.lower()
+        result.loc[same_subgenre_mask, "similarity"] *= SUBGENRE_BOOST_FACTOR
+    
+    return result
+
+
+# --------------------------------------------------------------------
+# Artist diversity helper
+# --------------------------------------------------------------------
+MAX_PER_ARTIST = 2  # Max songs from same artist in recommendations
+
+
+def _apply_artist_diversity(result: pd.DataFrame, top_k: int) -> pd.DataFrame:
+    """
+    Limit the number of songs per artist to avoid repetitive recommendations.
+    """
+    if "track_artist" not in result.columns:
+        return result.head(top_k)
+    
+    result = result.sort_values("similarity", ascending=False)
+    
+    selected = []
+    artist_counts: Dict[str, int] = {}
+    
+    for _, row in result.iterrows():
+        artist = row.get("track_artist", "Unknown")
+        if artist_counts.get(artist, 0) < MAX_PER_ARTIST:
+            selected.append(row)
+            artist_counts[artist] = artist_counts.get(artist, 0) + 1
+            if len(selected) >= top_k:
+                break
+    
+    return pd.DataFrame(selected)
 
 
 # --------------------------------------------------------------------
@@ -135,14 +219,27 @@ def get_mood_recommendations(mood: str, top_k: int = 10) -> pd.DataFrame:
     return scored[ordered]
 
 
-def get_similar_songs(track_id: str, top_k: int = 10) -> pd.DataFrame:
+def get_similar_songs(
+    track_id: str,
+    top_k: int = 10,
+    preset: Optional[str] = None,
+    use_genre_boost: bool = True,
+    use_artist_diversity: bool = True,
+) -> pd.DataFrame:
     """
     Find tracks that are similar to the given track_id in the full
     feature space (danceability/energy/valence/tempo/… depending on
     build_feature_matrix implementation).
+    
+    Args:
+        track_id: The Spotify track ID to find similar songs for
+        top_k: Number of recommendations to return
+        preset: Optional feature weight preset ("mood", "workout", "chill", "psychedelic")
+        use_genre_boost: If True, boost same-genre tracks
+        use_artist_diversity: If True, limit max songs per artist
     """
     songs = _get_songs_df()
-    X, feature_cols = _get_feature_matrix()
+    X, feature_cols = _get_feature_matrix(preset=preset)
 
     if "track_id" not in songs.columns:
         raise KeyError("Songs dataframe must contain a 'track_id' column.")
@@ -151,6 +248,11 @@ def get_similar_songs(track_id: str, top_k: int = 10) -> pd.DataFrame:
     if len(matches) == 0:
         raise KeyError(f"Unknown track_id: {track_id}")
     idx = matches[0]
+    
+    # Get reference track info for genre boosting
+    ref_track = songs.loc[idx]
+    ref_genre = ref_track.get("playlist_genre") if "playlist_genre" in songs.columns else None
+    ref_subgenre = ref_track.get("playlist_subgenre") if "playlist_subgenre" in songs.columns else None
 
     base_vec = X[idx : idx + 1]
     sims = cosine_similarity(base_vec, X)[0]
@@ -158,14 +260,33 @@ def get_similar_songs(track_id: str, top_k: int = 10) -> pd.DataFrame:
     result = songs.copy()
     result["similarity"] = sims
 
-    # Drop the reference track itself, then sort
+    # Drop the reference track itself
     result = result[result["track_id"] != track_id]
-    result = result.sort_values("similarity", ascending=False).head(top_k)
+    
+    # Remove duplicate tracks (same track_id), keep the one with highest similarity
+    result = result.sort_values("similarity", ascending=False)
+    result = result.drop_duplicates(subset=["track_id"], keep="first")
+    
+    # Apply genre boosting if enabled
+    if use_genre_boost:
+        result = _apply_genre_boost(result, ref_genre, ref_subgenre)
+        result = result.sort_values("similarity", ascending=False)
+    
+    # Apply artist diversity if enabled
+    if use_artist_diversity:
+        result = _apply_artist_diversity(result, top_k)
+    else:
+        result = result.head(top_k)
 
     def _explain(row: pd.Series) -> str:
+        genre_info = ""
+        if ref_genre and "playlist_genre" in row.index:
+            row_genre = row.get("playlist_genre", "")
+            if row_genre and str(row_genre).lower() == str(ref_genre).lower():
+                genre_info = f" Both are in the {ref_genre} genre."
         return (
-            "Recommended because it is close to your chosen track in the "
-            "audio feature space (higher similarity means more similar sound)."
+            f"Recommended because it has similar audio characteristics "
+            f"(valence, energy, tempo, etc.) to your chosen track.{genre_info}"
         )
 
     result = result.copy()
@@ -175,22 +296,37 @@ def get_similar_songs(track_id: str, top_k: int = 10) -> pd.DataFrame:
         "track_id",
         "track_name",
         "track_artist",
+        "playlist_genre",
+        "playlist_subgenre",
         "similarity",
         "explanation",
     ]
     ordered = [c for c in preferred_cols if c in result.columns] + [
-        c for c in result.columns if c not in result.columns
+        c for c in result.columns if c not in preferred_cols
     ]
     return result[ordered]
 
 
-def get_similar_songs_by_name(song_name: str, top_k: int = 10) -> pd.DataFrame:
+def get_similar_songs_by_name(
+    song_name: str,
+    top_k: int = 10,
+    preset: Optional[str] = None,
+    use_genre_boost: bool = True,
+    use_artist_diversity: bool = True,
+) -> pd.DataFrame:
     """
     Find tracks similar to a song by searching for the song name (fuzzy match).
     Returns similar songs based on audio features.
+    
+    Args:
+        song_name: Name of the song to search for
+        top_k: Number of recommendations to return
+        preset: Optional feature weight preset ("mood", "workout", "chill", "psychedelic")
+        use_genre_boost: If True, boost same-genre tracks
+        use_artist_diversity: If True, limit max songs per artist
     """
     songs = _get_songs_df()
-    X, feature_cols = _get_feature_matrix()
+    X, feature_cols = _get_feature_matrix(preset=preset)
 
     if "track_name" not in songs.columns:
         raise KeyError("Songs dataframe must contain a 'track_name' column.")
@@ -219,6 +355,8 @@ def get_similar_songs_by_name(song_name: str, top_k: int = 10) -> pd.DataFrame:
     matched_name = matched_song["track_name"]
     matched_artist = matched_song.get("track_artist", "Unknown")
     matched_track_id = matched_song.get("track_id", "")
+    ref_genre = matched_song.get("playlist_genre") if "playlist_genre" in songs.columns else None
+    ref_subgenre = matched_song.get("playlist_subgenre") if "playlist_subgenre" in songs.columns else None
 
     base_vec = X[idx : idx + 1]
     sims = cosine_similarity(base_vec, X)[0]
@@ -232,12 +370,27 @@ def get_similar_songs_by_name(song_name: str, top_k: int = 10) -> pd.DataFrame:
     # Remove duplicate tracks (same track_id), keep the one with highest similarity
     result = result.sort_values("similarity", ascending=False)
     result = result.drop_duplicates(subset=["track_id"], keep="first")
-    result = result.head(top_k)
+    
+    # Apply genre boosting if enabled
+    if use_genre_boost:
+        result = _apply_genre_boost(result, ref_genre, ref_subgenre)
+        result = result.sort_values("similarity", ascending=False)
+    
+    # Apply artist diversity if enabled
+    if use_artist_diversity:
+        result = _apply_artist_diversity(result, top_k)
+    else:
+        result = result.head(top_k)
 
     def _explain(row: pd.Series) -> str:
+        genre_info = ""
+        if ref_genre and "playlist_genre" in row.index:
+            row_genre = row.get("playlist_genre", "")
+            if row_genre and str(row_genre).lower() == str(ref_genre).lower():
+                genre_info = f" Both are in the {ref_genre} genre."
         return (
             f"Similar to \"{matched_name}\" by {matched_artist} based on audio features "
-            f"(danceability, energy, valence, tempo, etc.)."
+            f"(danceability, energy, valence, tempo, etc.).{genre_info}"
         )
 
     result = result.copy()
@@ -247,6 +400,8 @@ def get_similar_songs_by_name(song_name: str, top_k: int = 10) -> pd.DataFrame:
         "track_id",
         "track_name",
         "track_artist",
+        "playlist_genre",
+        "playlist_subgenre",
         "similarity",
         "explanation",
     ]

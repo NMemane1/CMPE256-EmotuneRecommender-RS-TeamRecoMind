@@ -109,7 +109,13 @@ def get_supported_moods() -> List[str]:
     return ["happy", "sad", "energetic", "calm", "angry", "romantic", "mellow"]
 
 
-def get_similar_songs_by_name(song_name: str, limit: int = 10) -> List[Dict]:
+def get_similar_songs_by_name(
+    song_name: str,
+    limit: int = 10,
+    preset: Optional[str] = None,
+    use_genre_boost: bool = True,
+    use_artist_diversity: bool = True,
+) -> List[Dict]:
     """
     Find songs similar to a given song by searching by name.
     Uses audio feature similarity (danceability, energy, valence, tempo, etc.)
@@ -117,12 +123,21 @@ def get_similar_songs_by_name(song_name: str, limit: int = 10) -> List[Dict]:
     Args:
         song_name: The name of the song to find similar tracks for
         limit: Maximum number of recommendations to return
+        preset: Feature weight preset ("mood", "workout", "chill", "psychedelic")
+        use_genre_boost: Boost same-genre tracks
+        use_artist_diversity: Limit songs per artist
         
     Returns:
         List of similar song dictionaries
     """
     try:
-        df = recommend_similar_by_name(song_name, n=limit)
+        df = recommend_similar_by_name(
+            song_name,
+            n=limit,
+            preset=preset,
+            use_genre_boost=use_genre_boost,
+            use_artist_diversity=use_artist_diversity,
+        )
 
         if df.empty:
             logger.warning(f"No songs found matching: {song_name}")
@@ -176,7 +191,13 @@ def get_song_by_track_id(track_id: str) -> Optional[Dict]:
         return None
 
 
-def get_similar_songs_by_track_id(track_id: str, limit: int = 10) -> List[Dict]:
+def get_similar_songs_by_track_id(
+    track_id: str,
+    limit: int = 10,
+    preset: Optional[str] = None,
+    use_genre_boost: bool = True,
+    use_artist_diversity: bool = True,
+) -> List[Dict]:
     """
     Find songs similar to a given Spotify track ID.
     Uses audio feature similarity (danceability, energy, valence, tempo, etc.)
@@ -184,12 +205,21 @@ def get_similar_songs_by_track_id(track_id: str, limit: int = 10) -> List[Dict]:
     Args:
         track_id: The Spotify track ID to find similar tracks for
         limit: Maximum number of recommendations to return
+        preset: Feature weight preset ("mood", "workout", "chill", "psychedelic")
+        use_genre_boost: Boost same-genre tracks
+        use_artist_diversity: Limit songs per artist
         
     Returns:
         List of similar song dictionaries
     """
     try:
-        df = recommend_similar_song(track_id, n=limit)
+        df = recommend_similar_song(
+            track_id,
+            n=limit,
+            preset=preset,
+            use_genre_boost=use_genre_boost,
+            use_artist_diversity=use_artist_diversity,
+        )
 
         if df.empty:
             logger.warning(f"No similar songs found for track_id: {track_id}")

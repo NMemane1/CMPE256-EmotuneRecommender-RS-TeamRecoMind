@@ -42,11 +42,17 @@ class TextRequest(BaseModel):
 class SimilarSongsRequest(BaseModel):
     song_name: str
     top_n: int = 10
+    preset: Optional[str] = None  # "mood", "workout", "chill", "psychedelic"
+    use_genre_boost: bool = True
+    use_artist_diversity: bool = True
 
 
 class SpotifyTrackRequest(BaseModel):
     track_id: str
     top_n: int = 10
+    preset: Optional[str] = None  # "mood", "workout", "chill", "psychedelic"
+    use_genre_boost: bool = True
+    use_artist_diversity: bool = True
 
 
 class RecommendationResponse(BaseModel):
@@ -204,8 +210,19 @@ async def recommend_similar_songs(request: SimilarSongsRequest):
     1. User provides a song name
     2. System searches for the song in the database
     3. If found, returns songs with similar audio features
+    
+    Optional parameters:
+    - preset: Feature weight preset ("mood", "workout", "chill", "psychedelic")
+    - use_genre_boost: Boost same-genre tracks (default: True)
+    - use_artist_diversity: Limit songs per artist (default: True)
     """
-    recommendations = get_similar_songs_by_name(request.song_name, request.top_n)
+    recommendations = get_similar_songs_by_name(
+        request.song_name,
+        request.top_n,
+        preset=request.preset,
+        use_genre_boost=request.use_genre_boost,
+        use_artist_diversity=request.use_artist_diversity,
+    )
     
     return SimilarSongsResponse(
         query_song=request.song_name,
@@ -223,6 +240,11 @@ async def recommend_from_spotify_track(request: SpotifyTrackRequest):
     1. User provides a Spotify track ID (from a Spotify URL)
     2. System looks up the song in the database
     3. If found, returns song info and similar songs based on audio features
+    
+    Optional parameters:
+    - preset: Feature weight preset ("mood", "workout", "chill", "psychedelic")
+    - use_genre_boost: Boost same-genre tracks (default: True)
+    - use_artist_diversity: Limit songs per artist (default: True)
     """
     # First, look up the song info
     song_info = get_song_by_track_id(request.track_id)
@@ -236,8 +258,14 @@ async def recommend_from_spotify_track(request: SpotifyTrackRequest):
             recommendations=[]
         )
     
-    # Get similar songs
-    recommendations = get_similar_songs_by_track_id(request.track_id, request.top_n)
+    # Get similar songs with new parameters
+    recommendations = get_similar_songs_by_track_id(
+        request.track_id,
+        request.top_n,
+        preset=request.preset,
+        use_genre_boost=request.use_genre_boost,
+        use_artist_diversity=request.use_artist_diversity,
+    )
     
     return SpotifyTrackResponse(
         track_id=request.track_id,

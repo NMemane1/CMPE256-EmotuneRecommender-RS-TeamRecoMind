@@ -60,3 +60,16 @@ local_settings.py
 
 # Rope
 .ropeproject/
+
+# Node.js / Frontend
+node_modules/
+frontend/node_modules/
+.next/
+frontend/.next/
+out/
+frontend/out/
+*.tsbuildinfo
+
+# Environment files
+.env.local
+frontend/.env.local
