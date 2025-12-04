@@ -11,8 +11,8 @@ from pydantic import BaseModel
 from typing import List, Optional
 import uvicorn
 
-from emotion_service import EmotionDetectionService
-from recommender_service import get_recommendations
+from backend.emotion_service import EmotionDetectionService
+from backend.recommender_service import get_recommendations, get_similar_songs_by_name, get_song_by_track_id, get_similar_songs_by_track_id
 
 app = FastAPI(
     title="Emotune Recommender API",
@@ -39,10 +39,34 @@ class TextRequest(BaseModel):
     mood: Optional[str] = None
 
 
+class SimilarSongsRequest(BaseModel):
+    song_name: str
+    top_n: int = 10
+
+
+class SpotifyTrackRequest(BaseModel):
+    track_id: str
+    top_n: int = 10
+
+
 class RecommendationResponse(BaseModel):
     emotions: List[dict]
     top_emotion: str
     top_score: float
+    recommendations: List[dict]
+
+
+class SimilarSongsResponse(BaseModel):
+    query_song: str
+    found: bool
+    recommendations: List[dict]
+
+
+class SpotifyTrackResponse(BaseModel):
+    track_id: str
+    found: bool
+    track_name: Optional[str] = None
+    track_artist: Optional[str] = None
     recommendations: List[dict]
 
 
@@ -166,6 +190,60 @@ async def recommend_from_text(request: TextRequest):
         emotions=emotions,
         top_emotion=top_emotion,
         top_score=top_score,
+        recommendations=recommendations
+    )
+
+
+@app.post("/api/recommend/similar", response_model=SimilarSongsResponse)
+async def recommend_similar_songs(request: SimilarSongsRequest):
+    """
+    Find songs similar to a given song by name.
+    Uses audio feature similarity (danceability, energy, valence, tempo, etc.)
+    
+    Flow:
+    1. User provides a song name
+    2. System searches for the song in the database
+    3. If found, returns songs with similar audio features
+    """
+    recommendations = get_similar_songs_by_name(request.song_name, request.top_n)
+    
+    return SimilarSongsResponse(
+        query_song=request.song_name,
+        found=len(recommendations) > 0,
+        recommendations=recommendations
+    )
+
+
+@app.post("/api/recommend/spotify", response_model=SpotifyTrackResponse)
+async def recommend_from_spotify_track(request: SpotifyTrackRequest):
+    """
+    Look up a song by Spotify track ID and find similar songs.
+    
+    Flow:
+    1. User provides a Spotify track ID (from a Spotify URL)
+    2. System looks up the song in the database
+    3. If found, returns song info and similar songs based on audio features
+    """
+    # First, look up the song info
+    song_info = get_song_by_track_id(request.track_id)
+    
+    if not song_info:
+        return SpotifyTrackResponse(
+            track_id=request.track_id,
+            found=False,
+            track_name=None,
+            track_artist=None,
+            recommendations=[]
+        )
+    
+    # Get similar songs
+    recommendations = get_similar_songs_by_track_id(request.track_id, request.top_n)
+    
+    return SpotifyTrackResponse(
+        track_id=request.track_id,
+        found=True,
+        track_name=song_info.get("track_name"),
+        track_artist=song_info.get("track_artist"),
         recommendations=recommendations
     )
 

@@ -182,3 +182,75 @@ def get_similar_songs(track_id: str, top_k: int = 10) -> pd.DataFrame:
         c for c in result.columns if c not in result.columns
     ]
     return result[ordered]
+
+
+def get_similar_songs_by_name(song_name: str, top_k: int = 10) -> pd.DataFrame:
+    """
+    Find tracks similar to a song by searching for the song name (fuzzy match).
+    Returns similar songs based on audio features.
+    """
+    songs = _get_songs_df()
+    X, feature_cols = _get_feature_matrix()
+
+    if "track_name" not in songs.columns:
+        raise KeyError("Songs dataframe must contain a 'track_name' column.")
+
+    # Case-insensitive partial match
+    song_name_lower = song_name.lower().strip()
+    
+    # Try exact match first
+    mask = songs["track_name"].str.lower().str.strip() == song_name_lower
+    if mask.sum() == 0:
+        # Try partial/contains match
+        mask = songs["track_name"].str.lower().str.contains(song_name_lower, na=False, regex=False)
+    
+    if mask.sum() == 0:
+        # No match found - return empty with message
+        return pd.DataFrame({
+            "track_name": [],
+            "track_artist": [],
+            "similarity": [],
+            "explanation": [],
+        })
+    
+    # Get the first matching song
+    idx = songs.index[mask][0]
+    matched_song = songs.loc[idx]
+    matched_name = matched_song["track_name"]
+    matched_artist = matched_song.get("track_artist", "Unknown")
+    matched_track_id = matched_song.get("track_id", "")
+
+    base_vec = X[idx : idx + 1]
+    sims = cosine_similarity(base_vec, X)[0]
+
+    result = songs.copy()
+    result["similarity"] = sims
+
+    # Remove the reference track (by track_id to catch duplicates)
+    result = result[result["track_id"] != matched_track_id]
+    
+    # Remove duplicate tracks (same track_id), keep the one with highest similarity
+    result = result.sort_values("similarity", ascending=False)
+    result = result.drop_duplicates(subset=["track_id"], keep="first")
+    result = result.head(top_k)
+
+    def _explain(row: pd.Series) -> str:
+        return (
+            f"Similar to \"{matched_name}\" by {matched_artist} based on audio features "
+            f"(danceability, energy, valence, tempo, etc.)."
+        )
+
+    result = result.copy()
+    result["explanation"] = result.apply(_explain, axis=1)
+
+    preferred_cols = [
+        "track_id",
+        "track_name",
+        "track_artist",
+        "similarity",
+        "explanation",
+    ]
+    ordered = [c for c in preferred_cols if c in result.columns] + [
+        c for c in result.columns if c not in preferred_cols
+    ]
+    return result[ordered]

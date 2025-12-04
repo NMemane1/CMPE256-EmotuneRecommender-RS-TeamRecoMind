@@ -161,8 +161,14 @@ class EmotionDetectionService:
         emotions_tuple = self._extract_emotions_from_prosody(predictions)
 
         if not emotions_tuple:
-            self.logger.error("No prosody emotion predictions found in Hume response")
-            raise RuntimeError("No prosody emotion predictions found")
+            # No prosody detected (e.g., instrumental music, no speech)
+            # Return a neutral fallback so the API doesn't crash
+            self.logger.warning(
+                "No prosody emotion predictions found in Hume response. "
+                "This may happen with instrumental music or short/silent audio. "
+                "Falling back to neutral emotion."
+            )
+            return [{"name": "Calmness", "score": 0.5}]
 
         # Convert to list of dicts
         emotions = [

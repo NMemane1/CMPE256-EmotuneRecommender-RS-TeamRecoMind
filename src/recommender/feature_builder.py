@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
+import numpy as np
 import pandas as pd
 
 # Path to your dataset
@@ -38,8 +39,9 @@ def load_song_data(path: Path = DATA_PATH) -> pd.DataFrame:
     return df
 
 
-def build_feature_matrix(df: pd.DataFrame) -> pd.DataFrame:
+def build_feature_matrix(df: pd.DataFrame) -> Tuple[np.ndarray, List[str]]:
     """
-    Return a DataFrame containing only the numerical features we use for similarity.
+    Return a numpy array of the numerical features and the list of feature column names.
     """
-    return df[AUDIO_FEATURES].astype(float)
+    X = df[AUDIO_FEATURES].astype(float).values
+    return X, AUDIO_FEATURES

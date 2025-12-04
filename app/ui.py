@@ -1,5 +1,16 @@
 import os
+import sys
 from pathlib import Path
+
+# When running `python app/ui.py` the script's directory becomes sys.path[0]
+# which prevents imports like `src.*` from resolving. Ensure the project
+# root is on `sys.path` so `from src...` imports work whether you run the
+# file directly or via `streamlit run app/ui.py`.
+project_root = Path(__file__).resolve().parents[0]
+repo_root = project_root.parent
+repo_root_str = str(repo_root)
+if repo_root_str not in sys.path:
+    sys.path.insert(0, repo_root_str)
 
 import pandas as pd
 import requests
