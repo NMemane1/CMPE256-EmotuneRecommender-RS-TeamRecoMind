@@ -8,7 +8,7 @@ load_dotenv()
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 import uvicorn
 
 from emotion_service import EmotionDetectionService
@@ -34,7 +34,9 @@ emotion_service = EmotionDetectionService()
 
 
 class TextRequest(BaseModel):
-    text: str
+    text: Optional[str] = None
+    # If provided, 'mood' will be used directly to fetch recommendations
+    mood: Optional[str] = None
 
 
 class RecommendationResponse(BaseModel):
@@ -126,20 +128,40 @@ async def recommend_from_text(request: TextRequest):
     3. Emotions are passed to the recommender system
     4. Returns detected emotions and recommended songs
     """
+    # If user provided a mood, use it directly for recommendations
+    if request.mood:
+        top_emotion = request.mood
+        # We return a minimal emotions list derived from the provided mood
+        emotions = [{"name": top_emotion, "score": 1.0}]
+        recommendations = get_recommendations(top_emotion, emotions)
+
+        return RecommendationResponse(
+            emotions=emotions,
+            top_emotion=top_emotion,
+            top_score=1.0,
+            recommendations=recommendations
+        )
+
     # TODO: Integrate actual text emotion analysis (e.g., using transformers)
-    # For now, return placeholder emotions
-    emotions = [
-        {"name": "Joy", "score": 0.75},
-        {"name": "Contentment", "score": 0.15},
-        {"name": "Neutral", "score": 0.10}
-    ]
-    
+    # For now, analyze 'text' if provided, otherwise return an error
+    if not request.text:
+        raise HTTPException(status_code=400, detail="Either 'text' or 'mood' must be provided")
+
+    # Placeholder simple heuristic: look for common mood words in text
+    txt = request.text.lower()
+    if any(word in txt for word in ["happy", "joy", "glad", "excited", "elated"]):
+        emotions = [{"name": "Joy", "score": 0.9}]
+    elif any(word in txt for word in ["sad", "depressed", "unhappy", "down"]):
+        emotions = [{"name": "Sadness", "score": 0.9}]
+    elif any(word in txt for word in ["angry", "mad", "furious", "annoyed"]):
+        emotions = [{"name": "Anger", "score": 0.9}]
+    else:
+        emotions = [{"name": "Neutral", "score": 0.6}]
+
     top_emotion = emotions[0]["name"]
     top_score = emotions[0]["score"]
-    
-    # Pass emotions to recommender system
     recommendations = get_recommendations(top_emotion, emotions)
-    
+
     return RecommendationResponse(
         emotions=emotions,
         top_emotion=top_emotion,
