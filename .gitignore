@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.env
+.env.*
+.venv/
+backend/venv/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+*.egg
+
+# Testing
+.pytest_cache/
+.coverage
+coverage.xml
+
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# macOS
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+/tmp/emotune_uvicorn.log
+
+# C extensions
+*.so
+
+# Misc
+*.sqlite3
+*.db
+.python-version
+
+# Ignore local config files
+local_settings.py
+
+# mypy
+.mypy_cache/
+
+# cache
+.cache/
+
+# Distribution
+.eggs/
+
+# Rope
+.ropeproject/
