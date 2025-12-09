@@ -33,11 +33,11 @@ EMOTION_TO_MOOD: Dict[str, str] = {
     "relief": "calm",
     "satisfaction": "calm",
     "serenity": "calm",
-    "concentration": "calm",
+    "concentration": "focus",  # Studying/working - needs focus music
     "boredom": "mellow",
     "tiredness": "mellow",
     "contemplation": "mellow",
-    "nostalgia": "mellow",
+    "nostalgia": "nostalgic",  # Nostalgic mood - prefers older songs
     "love": "romantic",
     "desire": "romantic",
     "admiration": "romantic",
@@ -50,8 +50,8 @@ EMOTION_TO_MOOD: Dict[str, str] = {
     "nervousness": "calm",
 }
 
-# Default mood when no mapping is found
-DEFAULT_MOOD = "happy"
+# Default mood when no mapping is found - calm is a safer default than party music
+DEFAULT_MOOD = "calm"
 
 
 def _map_emotion_to_mood(emotion: str) -> str:

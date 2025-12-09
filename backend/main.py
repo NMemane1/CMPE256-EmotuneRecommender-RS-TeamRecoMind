@@ -177,16 +177,26 @@ async def recommend_from_text(request: TextRequest):
     if not request.text:
         raise HTTPException(status_code=400, detail="Either 'text' or 'mood' must be provided")
 
-    # Placeholder simple heuristic: look for common mood words in text
+    # Heuristic: look for common mood words in text
     txt = request.text.lower()
-    if any(word in txt for word in ["happy", "joy", "glad", "excited", "elated"]):
+    if any(word in txt for word in ["happy", "joy", "glad", "excited", "elated", "great", "amazing", "awesome"]):
         emotions = [{"name": "Joy", "score": 0.9}]
-    elif any(word in txt for word in ["sad", "depressed", "unhappy", "down"]):
+    elif any(word in txt for word in ["sad", "depressed", "unhappy", "down", "lonely", "heartbroken", "crying"]):
         emotions = [{"name": "Sadness", "score": 0.9}]
-    elif any(word in txt for word in ["angry", "mad", "furious", "annoyed"]):
+    elif any(word in txt for word in ["angry", "mad", "furious", "annoyed", "frustrated", "pissed"]):
         emotions = [{"name": "Anger", "score": 0.9}]
+    elif any(word in txt for word in ["study", "studying", "focus", "concentrate", "work", "working", "productive", "homework", "reading"]):
+        emotions = [{"name": "Concentration", "score": 0.9}]
+    elif any(word in txt for word in ["chill", "relax", "relaxing", "calm", "peaceful", "sleepy", "tired", "rest", "sleep", "wind down"]):
+        emotions = [{"name": "Calmness", "score": 0.9}]
+    elif any(word in txt for word in ["energetic", "pump", "pumped", "workout", "exercise", "gym", "run", "running", "hype", "party"]):
+        emotions = [{"name": "Excitement", "score": 0.9}]
+    elif any(word in txt for word in ["love", "romantic", "romance", "date", "crush", "heart"]):
+        emotions = [{"name": "Love", "score": 0.9}]
+    elif any(word in txt for word in ["nostalgic", "nostalgia", "memories", "remember", "miss", "missing"]):
+        emotions = [{"name": "Nostalgia", "score": 0.9}]
     else:
-        emotions = [{"name": "Neutral", "score": 0.6}]
+        emotions = [{"name": "Calmness", "score": 0.6}]  # Default to calm/chill, not happy
 
     top_emotion = emotions[0]["name"]
     top_score = emotions[0]["score"]

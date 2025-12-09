@@ -126,58 +126,138 @@ def _apply_artist_diversity(result: pd.DataFrame, top_k: int) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------
-# Mood profiles (Option B – including mellow)
+# Full 9-Feature Mood Prototypes
 # --------------------------------------------------------------------
-# These are target points in (valence, energy) space:
-#   valence: 0 (negative) → 1 (positive)
-#   energy : 0 (calm)     → 1 (intense)
+# Each mood is defined as a target vector across ALL audio features.
+# This is much more accurate than just valence+energy.
 #
-# "mellow" ≈ warm, slightly positive, low-mid energy.
+# Features (in order): danceability, energy, loudness, speechiness,
+#                      acousticness, instrumentalness, liveness, valence, tempo
+#
+# Values are normalized targets (0-1 scale, tempo scaled to 0-1 from 0-200 BPM)
+from src.recommender.feature_builder import AUDIO_FEATURES
+
+MOOD_PROTOTYPES: Dict[str, Dict[str, float]] = {
+    "happy": {
+        "danceability": 0.70,
+        "energy": 0.75,
+        "loudness": 0.65,  # Normalized: -60 to 0 dB → 0 to 1
+        "speechiness": 0.10,
+        "acousticness": 0.25,
+        "instrumentalness": 0.05,
+        "liveness": 0.20,
+        "valence": 0.85,
+        "tempo": 0.60,  # ~120 BPM
+    },
+    "sad": {
+        "danceability": 0.35,
+        "energy": 0.30,
+        "loudness": 0.40,
+        "speechiness": 0.05,
+        "acousticness": 0.70,
+        "instrumentalness": 0.20,
+        "liveness": 0.10,
+        "valence": 0.20,
+        "tempo": 0.40,  # ~80 BPM, slower
+    },
+    "energetic": {
+        "danceability": 0.80,
+        "energy": 0.90,
+        "loudness": 0.80,
+        "speechiness": 0.15,
+        "acousticness": 0.10,
+        "instrumentalness": 0.10,
+        "liveness": 0.30,
+        "valence": 0.75,
+        "tempo": 0.70,  # ~140 BPM
+    },
+    "calm": {
+        "danceability": 0.40,
+        "energy": 0.25,
+        "loudness": 0.35,
+        "speechiness": 0.05,
+        "acousticness": 0.75,
+        "instrumentalness": 0.40,
+        "liveness": 0.10,
+        "valence": 0.55,
+        "tempo": 0.35,  # ~70 BPM
+    },
+    "angry": {
+        "danceability": 0.50,
+        "energy": 0.90,
+        "loudness": 0.85,
+        "speechiness": 0.20,
+        "acousticness": 0.05,
+        "instrumentalness": 0.05,
+        "liveness": 0.25,
+        "valence": 0.25,
+        "tempo": 0.65,  # ~130 BPM
+    },
+    "romantic": {
+        "danceability": 0.55,
+        "energy": 0.45,
+        "loudness": 0.50,
+        "speechiness": 0.05,
+        "acousticness": 0.60,
+        "instrumentalness": 0.15,
+        "liveness": 0.15,
+        "valence": 0.75,
+        "tempo": 0.45,  # ~90 BPM
+    },
+    "mellow": {
+        "danceability": 0.50,
+        "energy": 0.40,
+        "loudness": 0.45,
+        "speechiness": 0.05,
+        "acousticness": 0.55,
+        "instrumentalness": 0.30,
+        "liveness": 0.12,
+        "valence": 0.55,
+        "tempo": 0.45,  # ~90 BPM
+    },
+    "focus": {
+        # Ideal for studying: instrumental, low speech, moderate tempo, not too energetic
+        "danceability": 0.45,
+        "energy": 0.35,
+        "loudness": 0.40,
+        "speechiness": 0.03,  # Very low - no distracting vocals
+        "acousticness": 0.50,
+        "instrumentalness": 0.70,  # High - instrumental music for focus
+        "liveness": 0.10,
+        "valence": 0.50,
+        "tempo": 0.50,  # ~100 BPM - steady, not too fast
+    },
+    "nostalgic": {
+        # Nostalgic/throwback vibes - year boost applied separately
+        "danceability": 0.55,
+        "energy": 0.50,
+        "loudness": 0.50,
+        "speechiness": 0.08,
+        "acousticness": 0.45,
+        "instrumentalness": 0.15,
+        "liveness": 0.15,
+        "valence": 0.60,  # Bittersweet positive
+        "tempo": 0.50,
+    },
+}
+
+# Legacy 2D targets for backward compatibility
 MOOD_TARGETS: Dict[str, Dict[str, float]] = {
-    "happy":     {"valence": 0.85, "energy": 0.70},
-    "sad":       {"valence": 0.20, "energy": 0.30},
-    "energetic": {"valence": 0.75, "energy": 0.90},
-    "calm":      {"valence": 0.55, "energy": 0.25},
-    "angry":     {"valence": 0.25, "energy": 0.85},
-    "romantic":  {"valence": 0.80, "energy": 0.55},
-    "mellow":    {"valence": 0.55, "energy": 0.45},
+    mood: {"valence": proto["valence"], "energy": proto["energy"]}
+    for mood, proto in MOOD_PROTOTYPES.items()
 }
 
 
-def _add_mood_distance(
-    df: pd.DataFrame,
-    mood: str,
-    valence_col: str = "valence",
-    energy_col: str = "energy",
-) -> pd.DataFrame:
-    """
-    Compute distance from each track to the mood's target (valence, energy).
-    Distance is Euclidean in (valence, energy) space.
-    """
+def _normalize_tempo(tempo: float) -> float:
+    """Normalize tempo from BPM (typically 50-200) to 0-1 scale."""
+    return np.clip((tempo - 50) / 150, 0, 1)
+
+
+def _get_mood_prototype_vector(mood: str) -> np.ndarray:
+    """Get the prototype vector for a mood in the same order as AUDIO_FEATURES."""
     mood_key = mood.lower()
-    target = MOOD_TARGETS.get(mood_key)
-
-    # Fallback if someone types a mood we didn't define
-    if target is None:
-        target = MOOD_TARGETS["happy"]
-        mood_key = "happy"
-
-    if valence_col not in df.columns or energy_col not in df.columns:
-        raise KeyError(
-            f"Expected '{valence_col}' and '{energy_col}' columns in songs dataframe."
-        )
-
-    v = df[valence_col].astype(float)
-    e = df[energy_col].astype(float)
-
-    dv = v - float(target["valence"])
-    de = e - float(target["energy"])
-
-    df = df.copy()
-    df["mood_distance"] = np.sqrt(dv**2 + de**2)
-    # Turn distance into a similarity-like score in [0, 1]
-    df["similarity"] = 1.0 / (1.0 + df["mood_distance"])
-    return df
+    proto = MOOD_PROTOTYPES.get(mood_key, MOOD_PROTOTYPES["calm"])
+    return np.array([proto.get(f, 0.5) for f in AUDIO_FEATURES])
 
 
 # --------------------------------------------------------------------
@@ -185,38 +265,115 @@ def _add_mood_distance(
 # --------------------------------------------------------------------
 def get_mood_recommendations(mood: str, top_k: int = 10) -> pd.DataFrame:
     """
-    Return top_k tracks that best match the requested mood based on
-    valence & energy, with an explanation string for each track.
+    Return top_k tracks that best match the requested mood using
+    cosine similarity across ALL 9 audio features (not just valence+energy).
+    
+    This provides much more accurate mood matching by considering:
+    - instrumentalness (important for focus/study)
+    - speechiness (vocals can be distracting)
+    - tempo (energy level)
+    - acousticness (electronic vs acoustic vibe)
+    - and more...
     """
     songs = _get_songs_df()
-    scored = _add_mood_distance(songs, mood)
-    scored = scored.sort_values("mood_distance", ascending=True).head(top_k)
-
-    # Explanations for UI / "Why this song"
+    X, feature_cols = _get_feature_matrix()  # Uses StandardScaler
+    
+    # Get the mood prototype and scale it the same way
+    mood_key = mood.lower()
+    if mood_key not in MOOD_PROTOTYPES:
+        mood_key = "calm"  # Safe fallback
+    
+    proto = MOOD_PROTOTYPES[mood_key]
+    
+    # Build prototype vector in raw feature space, then we'll compare
+    # We need to handle tempo specially (it's in BPM, not 0-1)
+    proto_raw = []
+    for f in AUDIO_FEATURES:
+        if f == "tempo":
+            # Convert our 0-1 tempo target back to BPM for comparison
+            proto_raw.append(proto.get(f, 0.5) * 150 + 50)
+        elif f == "loudness":
+            # Convert our 0-1 loudness target back to dB (roughly -60 to 0)
+            proto_raw.append(proto.get(f, 0.5) * 60 - 60)
+        else:
+            proto_raw.append(proto.get(f, 0.5))
+    
+    proto_vector = np.array(proto_raw).reshape(1, -1)
+    
+    # Scale the prototype using the same scaler as the songs
+    from src.recommender.feature_builder import _SCALER
+    if _SCALER is not None:
+        proto_scaled = _SCALER.transform(proto_vector)
+    else:
+        proto_scaled = proto_vector
+    
+    # Compute cosine similarity between prototype and all songs
+    sims = cosine_similarity(proto_scaled, X)[0]
+    
+    # Add similarity scores to dataframe
+    result = songs.copy()
+    result["similarity"] = sims
+    
+    # Apply year-based boost ONLY for nostalgic mood (prefer older songs)
+    # For other moods, year doesn't improve recommendations
+    if mood_key == "nostalgic" and "track_album_release_date" in result.columns:
+        try:
+            # Extract year from release date
+            result["_year"] = pd.to_datetime(
+                result["track_album_release_date"], errors="coerce"
+            ).dt.year
+            
+            # Boost songs from before 2010 by up to 10%
+            # Older = more nostalgic feel
+            year_boost = result["_year"].apply(
+                lambda y: 1.08 if pd.notna(y) and y < 2000 else 
+                         (1.05 if pd.notna(y) and y < 2010 else 1.0)
+            )
+            result["similarity"] = result["similarity"] * year_boost
+            result = result.drop(columns=["_year"])
+        except Exception:
+            pass  # If year parsing fails, just skip the boost
+    
+    # Sort by similarity and take top_k
+    result = result.sort_values("similarity", ascending=False).head(top_k)
+    
+    # Generate explanations highlighting key matching features
     def _explain(row: pd.Series) -> str:
+        highlights = []
+        if mood_key == "focus":
+            inst = row.get("instrumentalness", 0)
+            speech = row.get("speechiness", 0)
+            if inst > 0.3:
+                highlights.append(f"instrumental ({inst:.0%})")
+            if speech < 0.1:
+                highlights.append("low vocals")
+        
         v = row.get("valence", np.nan)
         e = row.get("energy", np.nan)
-        return (
-            f"Recommended because it matches the '{mood}' mood "
-            f"(valence={v:.2f}, energy={e:.2f})."
-        )
-
-    scored = scored.copy()
-    scored["explanation"] = scored.apply(_explain, axis=1)
-
+        base = f"Matches '{mood}' mood (valence={v:.2f}, energy={e:.2f})"
+        
+        if highlights:
+            return base + " — " + ", ".join(highlights)
+        return base
+    
+    result = result.copy()
+    result["explanation"] = result.apply(_explain, axis=1)
+    
     preferred_cols = [
         "track_id",
         "track_name",
         "track_artist",
         "valence",
         "energy",
+        "instrumentalness",
+        "speechiness",
         "similarity",
         "explanation",
     ]
-    ordered = [c for c in preferred_cols if c in scored.columns] + [
-        c for c in scored.columns if c not in preferred_cols
+    ordered = [c for c in preferred_cols if c in result.columns] + [
+        c for c in result.columns if c not in preferred_cols
     ]
-    return scored[ordered]
+    return result[ordered]
 
 
 def get_similar_songs(
