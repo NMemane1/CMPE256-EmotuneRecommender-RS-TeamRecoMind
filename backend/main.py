@@ -151,17 +151,16 @@ async def recommend_from_audio(file: UploadFile = File(...)):
 async def recommend_from_text(request: TextRequest):
     """
     Analyze text to detect emotions, then get personalized song recommendations.
-    
+
     Flow:
     1. User submits text
-    2. Text is analyzed for emotions (placeholder for now)
+    2. Text is analyzed for emotions (heuristic for now)
     3. Emotions are passed to the recommender system
     4. Returns detected emotions and recommended songs
     """
     # If user provided a mood, use it directly for recommendations
     if request.mood:
         top_emotion = request.mood
-        # We return a minimal emotions list derived from the provided mood
         emotions = [{"name": top_emotion, "score": 1.0}]
         recommendations = get_recommendations(top_emotion, emotions)
 
@@ -172,19 +171,31 @@ async def recommend_from_text(request: TextRequest):
             recommendations=recommendations
         )
 
-    # TODO: Integrate actual text emotion analysis (e.g., using transformers)
-    # For now, analyze 'text' if provided, otherwise return an error
     if not request.text:
         raise HTTPException(status_code=400, detail="Either 'text' or 'mood' must be provided")
 
+    txt = request.text.lower().strip()
+
+    # ✅ Guard: small-talk / unclear input
+    smalltalk = {"hi", "hey", "hello", "yo", "sup", "ok", "okay", "k", "kk", "test"}
+    if txt in smalltalk or len(txt.split()) <= 1:
+        emotions = [{"name": "Unknown", "score": 0.0}]
+        return RecommendationResponse(
+            emotions=emotions,
+            top_emotion="Unknown",
+            top_score=0.0,
+            recommendations=[]
+        )
+
     # Heuristic: look for common mood words in text
-    txt = request.text.lower()
     if any(word in txt for word in ["happy", "joy", "glad", "excited", "elated", "great", "amazing", "awesome"]):
         emotions = [{"name": "Joy", "score": 0.9}]
     elif any(word in txt for word in ["sad", "depressed", "unhappy", "down", "lonely", "heartbroken", "crying"]):
         emotions = [{"name": "Sadness", "score": 0.9}]
     elif any(word in txt for word in ["angry", "mad", "furious", "annoyed", "frustrated", "pissed"]):
         emotions = [{"name": "Anger", "score": 0.9}]
+    elif any(word in txt for word in ["scared", "afraid", "fear", "terrified", "anxious", "anxiety", "nervous", "panic", "panicking"]):
+        emotions = [{"name": "Fear", "score": 0.9}]
     elif any(word in txt for word in ["study", "studying", "focus", "concentrate", "work", "working", "productive", "homework", "reading"]):
         emotions = [{"name": "Concentration", "score": 0.9}]
     elif any(word in txt for word in ["chill", "relax", "relaxing", "calm", "peaceful", "sleepy", "tired", "rest", "sleep", "wind down"]):
@@ -196,10 +207,21 @@ async def recommend_from_text(request: TextRequest):
     elif any(word in txt for word in ["nostalgic", "nostalgia", "memories", "remember", "miss", "missing"]):
         emotions = [{"name": "Nostalgia", "score": 0.9}]
     else:
-        emotions = [{"name": "Calmness", "score": 0.6}]  # Default to calm/chill, not happy
+        # ✅ Professional behavior: don't guess a mood when unclear
+        emotions = [{"name": "Unknown", "score": 0.0}]
 
     top_emotion = emotions[0]["name"]
     top_score = emotions[0]["score"]
+
+    # If unknown, return empty recs (avoid accidental calm defaults)
+    if top_emotion == "Unknown":
+        return RecommendationResponse(
+            emotions=emotions,
+            top_emotion=top_emotion,
+            top_score=top_score,
+            recommendations=[]
+        )
+
     recommendations = get_recommendations(top_emotion, emotions)
 
     return RecommendationResponse(
@@ -208,8 +230,7 @@ async def recommend_from_text(request: TextRequest):
         top_score=top_score,
         recommendations=recommendations
     )
-
-
+    
 @app.post("/api/recommend/similar", response_model=SimilarSongsResponse)
 async def recommend_similar_songs(request: SimilarSongsRequest):
     """

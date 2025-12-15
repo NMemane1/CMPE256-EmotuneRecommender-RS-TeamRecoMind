@@ -50,42 +50,51 @@ EMOTION_TO_MOOD: Dict[str, str] = {
     "nervousness": "calm",
 }
 
-# Default mood when no mapping is found - calm is a safer default than party music
-DEFAULT_MOOD = "calm"
+# Default mood previously was "calm". We now avoid defaulting to a mood for unknown emotion.
+UNKNOWN_MOOD = "unknown"
 
 
 def _map_emotion_to_mood(emotion: str) -> str:
     """
     Map a Hume AI emotion name to a mood string understood by the recommender.
+    Returns UNKNOWN_MOOD if no mapping is found.
     """
-    key = emotion.lower().strip()
-    return EMOTION_TO_MOOD.get(key, DEFAULT_MOOD)
+    key = (emotion or "").lower().strip()
+    return EMOTION_TO_MOOD.get(key, UNKNOWN_MOOD)
+
+
+def _dedup_records(records: List[Dict]) -> List[Dict]:
+    """
+    Remove duplicate recommendations (same track_name + track_artist).
+    Keeps first occurrence.
+    """
+    seen = set()
+    out: List[Dict] = []
+    for rec in records:
+        key = (rec.get("track_name"), rec.get("track_artist"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(rec)
+    return out
 
 
 def get_recommendations(top_emotion: str, all_emotions: List[Dict] = None, limit: int = 10) -> List[Dict]:
     """
     Get song recommendations based on detected emotions using the real
     src/recommender system.
-    
-    Args:
-        top_emotion: The primary detected emotion name (from Hume AI)
-        all_emotions: Full list of detected emotions with scores (for future use)
-        limit: Maximum number of recommendations to return
-        
-    Returns:
-        List of song recommendation dictionaries with keys like
-        track_id, track_name, track_artist, similarity, explanation, etc.
     """
-    # Map the Hume emotion to a mood the recommender understands
     mood = _map_emotion_to_mood(top_emotion)
     logger.info(f"Mapped emotion '{top_emotion}' -> mood '{mood}'")
 
-    try:
-        # Call the real recommender
-        df = recommend_by_mood(mood, n=limit)
+    # ✅ NEW: If we can't map the emotion, don't default to calm.
+    # Return empty list so the UI can ask a follow-up instead of showing random calm music.
+    if mood == UNKNOWN_MOOD:
+        logger.info(f"Unknown emotion '{top_emotion}'. Returning no recommendations.")
+        return []
 
-        # Convert DataFrame to list of dicts for JSON response
-        # Select columns that are JSON-friendly (drop NaN, convert types)
+    try:
+        df = recommend_by_mood(mood, n=limit)
         records = df.to_dict(orient="records")
 
         # Clean up any NaN/inf values that can't be serialized
@@ -94,11 +103,12 @@ def get_recommendations(top_emotion: str, all_emotions: List[Dict] = None, limit
                 if isinstance(v, float) and (v != v or v == float("inf") or v == float("-inf")):
                     rec[k] = None
 
-        return records
+        # ✅ NEW: Deduplicate + enforce limit after dedup
+        records = _dedup_records(records)
+        return records[:limit]
 
     except Exception as e:
         logger.error(f"Recommender failed: {e}", exc_info=True)
-        # Return empty list on failure so the API doesn't crash
         return []
 
 
@@ -119,16 +129,6 @@ def get_similar_songs_by_name(
     """
     Find songs similar to a given song by searching by name.
     Uses audio feature similarity (danceability, energy, valence, tempo, etc.)
-    
-    Args:
-        song_name: The name of the song to find similar tracks for
-        limit: Maximum number of recommendations to return
-        preset: Feature weight preset ("mood", "workout", "chill", "psychedelic")
-        use_genre_boost: Boost same-genre tracks
-        use_artist_diversity: Limit songs per artist
-        
-    Returns:
-        List of similar song dictionaries
     """
     try:
         df = recommend_similar_by_name(
@@ -151,7 +151,9 @@ def get_similar_songs_by_name(
                 if isinstance(v, float) and (v != v or v == float("inf") or v == float("-inf")):
                     rec[k] = None
 
-        return records
+        # ✅ NEW: Deduplicate + enforce limit after dedup
+        records = _dedup_records(records)
+        return records[:limit]
 
     except Exception as e:
         logger.error(f"Similar songs search failed: {e}", exc_info=True)
@@ -161,31 +163,24 @@ def get_similar_songs_by_name(
 def get_song_by_track_id(track_id: str) -> Optional[Dict]:
     """
     Look up a song by its Spotify track ID.
-    
-    Args:
-        track_id: The Spotify track ID
-        
-    Returns:
-        Song info dict with track_name, track_artist, etc. or None if not found
     """
     try:
         songs = _get_songs_df()
         matches = songs[songs["track_id"] == track_id]
-        
+
         if matches.empty:
             logger.warning(f"No song found with track_id: {track_id}")
             return None
-        
-        # Return the first match as a dict
+
         song = matches.iloc[0].to_dict()
-        
+
         # Clean up NaN values
         for k, v in list(song.items()):
             if isinstance(v, float) and (v != v or v == float("inf") or v == float("-inf")):
                 song[k] = None
-                
+
         return song
-        
+
     except Exception as e:
         logger.error(f"Track ID lookup failed: {e}", exc_info=True)
         return None
@@ -201,16 +196,6 @@ def get_similar_songs_by_track_id(
     """
     Find songs similar to a given Spotify track ID.
     Uses audio feature similarity (danceability, energy, valence, tempo, etc.)
-    
-    Args:
-        track_id: The Spotify track ID to find similar tracks for
-        limit: Maximum number of recommendations to return
-        preset: Feature weight preset ("mood", "workout", "chill", "psychedelic")
-        use_genre_boost: Boost same-genre tracks
-        use_artist_diversity: Limit songs per artist
-        
-    Returns:
-        List of similar song dictionaries
     """
     try:
         df = recommend_similar_song(
@@ -233,7 +218,9 @@ def get_similar_songs_by_track_id(
                 if isinstance(v, float) and (v != v or v == float("inf") or v == float("-inf")):
                     rec[k] = None
 
-        return records
+        # ✅ NEW: Deduplicate + enforce limit after dedup
+        records = _dedup_records(records)
+        return records[:limit]
 
     except KeyError as e:
         logger.warning(f"Track ID not found: {e}")
@@ -241,4 +228,3 @@ def get_similar_songs_by_track_id(
     except Exception as e:
         logger.error(f"Similar songs by track_id failed: {e}", exc_info=True)
         return []
-
